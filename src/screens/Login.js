@@ -1,6 +1,5 @@
 import PropTypes from 'prop-types';
 import React, { useState } from 'react';
-import { signInWithEmailAndPassword } from 'firebase/auth';
 import {
   Text,
   View,
@@ -13,7 +12,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 
-import { auth } from '../config/firebase';
+import { signInWithPassword } from '../services/authService';
 import { colors } from '../config/constants';
 import backImage from '../assets/background.png';
 
@@ -21,11 +20,13 @@ export default function Login({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const onHandleLogin = () => {
+  const onHandleLogin = async () => {
     if (email !== '' && password !== '') {
-      signInWithEmailAndPassword(auth, email, password)
-        .then(() => console.log('Login success'))
-        .catch((err) => Alert.alert('Login error', err.message));
+      try {
+        await signInWithPassword(email, password);
+      } catch (err) {
+        Alert.alert('Login error', err.message);
+      }
     }
   };
 

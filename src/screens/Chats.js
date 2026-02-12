@@ -1,18 +1,8 @@
 import PropTypes from 'prop-types';
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import {
-  doc,
-  where,
-  query,
-  setDoc,
-  orderBy,
-  deleteDoc,
-  collection,
-  onSnapshot,
-} from 'firebase/firestore';
+import { useNavigation } from '@react-navigation/native';
 import {
   Text,
   View,
@@ -28,14 +18,17 @@ import {
 
 import { colors } from '../config/constants';
 import ContactRow from '../components/ContactRow';
-import { auth, database } from '../config/firebase';
+import { AuthenticatedUserContext } from '../contexts/AuthenticatedUserContext';
+import { listChatsForUser, softDeleteChatForUser, subscribeToUserChats } from '../services/chatService';
 
 const Chats = ({ setUnreadCount }) => {
   const navigation = useNavigation();
+  const { user } = useContext(AuthenticatedUserContext);
   const [chats, setChats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedItems, setSelectedItems] = useState([]);
   const [newMessages, setNewMessages] = useState({});
+  const latestMessageByChatRef = useRef({});
 
   useEffect(() => {
     if (Platform.OS === 'android') {
@@ -48,80 +41,109 @@ const Chats = ({ setUnreadCount }) => {
       });
       return () => subscription.remove();
     }
-    // Always return a cleanup function for non-android platforms
-    return () => { };
+    return () => {};
   }, [selectedItems.length]);
 
-  useFocusEffect(
-    useCallback(() => {
-      let unsubscribe = () => { };
-      const loadNewMessages = async () => {
-        try {
-          const storedMessages = await AsyncStorage.getItem('newMessages');
-          const parsed = storedMessages ? JSON.parse(storedMessages) : {};
-          setNewMessages(parsed);
-          setUnreadCount(Object.values(parsed).reduce((total, num) => total + num, 0));
-        } catch (error) {
-          console.log('Error loading new messages from storage', error);
-        }
-      };
-      const chatsRef = collection(database, 'chats');
-      const q = query(
-        chatsRef,
-        where('users', 'array-contains', {
-          email: auth?.currentUser?.email,
-          name: auth?.currentUser?.displayName,
-          deletedFromChat: false,
-        }),
-        orderBy('lastUpdated', 'desc')
-      );
-      unsubscribe = onSnapshot(q, (snapshot) => {
-        setChats(snapshot.docs);
-        setLoading(false);
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === 'modified') {
-            const chatId = change.doc.id;
-            const { messages } = change.doc.data();
-            if (Array.isArray(messages) && messages.length > 0) {
-              const firstMessage = messages[0];
-              if (
-                firstMessage.user &&
-                firstMessage.user._id !== auth?.currentUser?.email
-              ) {
-                setNewMessages((prev) => {
-                  const updated = { ...prev, [chatId]: (prev[chatId] || 0) + 1 };
-                  AsyncStorage.setItem('newMessages', JSON.stringify(updated));
-                  setUnreadCount(
-                    Object.values(updated).reduce((total, num) => total + num, 0)
-                  );
-                  return updated;
-                });
-              }
-            }
-          }
-        });
-      });
-      loadNewMessages();
-      return () => {
-        if (unsubscribe) unsubscribe();
-      };
-    }, [setUnreadCount])
+  const persistUnread = useCallback(
+    async (next) => {
+      await AsyncStorage.setItem('newMessages', JSON.stringify(next));
+      setUnreadCount(Object.values(next).reduce((total, num) => total + num, 0));
+    },
+    [setUnreadCount]
   );
 
-  const getChatName = useCallback((chat) => {
-    const { users, groupName } = chat.data();
-    const currentUser = auth?.currentUser;
-    if (groupName) return groupName;
-    if (Array.isArray(users) && users.length === 2) {
-      if (currentUser?.displayName) {
-        return users[0].name === currentUser.displayName ? users[1].name : users[0].name;
-      }
-      if (currentUser?.email) {
-        return users[0].email === currentUser.email ? users[1].email : users[0].email;
-      }
+  const loadNewMessages = useCallback(async () => {
+    try {
+      const storedMessages = await AsyncStorage.getItem('newMessages');
+      const parsed = storedMessages ? JSON.parse(storedMessages) : {};
+      setNewMessages(parsed);
+      setUnreadCount(Object.values(parsed).reduce((total, num) => total + num, 0));
+      return parsed;
+    } catch (error) {
+      console.log('Error loading new messages from storage', error);
+      return {};
     }
-    return '~ No Name or Email ~';
-  }, []);
+  }, [setUnreadCount]);
+
+  const loadChats = useCallback(
+    async (existingNewMessages = null) => {
+      if (!user?.id) return;
+
+      const counts = existingNewMessages ?? newMessages;
+
+      try {
+        const rows = await listChatsForUser(user.id);
+        const nextMap = { ...latestMessageByChatRef.current };
+        const updatedCounts = { ...counts };
+        let hasUnreadUpdates = false;
+
+        rows.forEach((chat) => {
+          const latest = chat.latestMessage;
+          if (!latest) return;
+
+          const previousMessageId = latestMessageByChatRef.current[chat.id];
+          nextMap[chat.id] = latest.id;
+
+          if (
+            previousMessageId &&
+            previousMessageId !== latest.id &&
+            latest.sender_id !== user.id
+          ) {
+            updatedCounts[chat.id] = (updatedCounts[chat.id] || 0) + 1;
+            hasUnreadUpdates = true;
+          }
+        });
+
+        latestMessageByChatRef.current = nextMap;
+        setChats(rows);
+
+        if (hasUnreadUpdates) {
+          setNewMessages(updatedCounts);
+          await persistUnread(updatedCounts);
+        }
+      } catch (error) {
+        Alert.alert('Error', error.message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [newMessages, persistUnread, user?.id]
+  );
+
+  useEffect(() => {
+    let unsubscribe = () => {};
+
+    const bootstrap = async () => {
+      const counts = await loadNewMessages();
+      await loadChats(counts);
+
+      if (user?.id) {
+        unsubscribe = subscribeToUserChats(user.id, () => {
+          loadChats();
+        });
+      }
+    };
+
+    bootstrap();
+
+    return () => {
+      unsubscribe();
+    };
+  }, [loadChats, loadNewMessages, user?.id]);
+
+  const getChatName = useCallback(
+    (chat) => {
+      if (chat.groupName) return chat.groupName;
+      const participants = chat.users || [];
+      if (participants.length === 2) {
+        const other = participants.find((participant) => participant.id !== user?.id);
+        return other?.name || other?.email || '~ No Name or Email ~';
+      }
+      const self = participants[0];
+      return self?.name || self?.email || '~ No Name or Email ~';
+    },
+    [user?.id]
+  );
 
   const handleChatPress = async (chat) => {
     const chatId = chat.id;
@@ -129,12 +151,11 @@ const Chats = ({ setUnreadCount }) => {
       selectItems(chat);
       return;
     }
-    setNewMessages((prev) => {
-      const updated = { ...prev, [chatId]: 0 };
-      AsyncStorage.setItem('newMessages', JSON.stringify(updated));
-      setUnreadCount(Object.values(updated).reduce((total, num) => total + num, 0));
-      return updated;
-    });
+
+    const updated = { ...newMessages, [chatId]: 0 };
+    setNewMessages(updated);
+    await persistUnread(updated);
+
     navigation.navigate('Chat', { id: chatId, chatName: getChatName(chat) });
   };
 
@@ -163,34 +184,20 @@ const Chats = ({ setUnreadCount }) => {
           text: 'Delete chat',
           style: 'destructive',
           onPress: async () => {
-            const deletePromises = selectedItems.map((chatId) => {
-              const chat = chats.find((c) => c.id === chatId);
-              if (!chat) return Promise.resolve();
-              const updatedUsers = chat
-                .data()
-                .users.map((user) =>
-                  user.email === auth?.currentUser?.email
-                    ? { ...user, deletedFromChat: true }
-                    : user
-                );
-              return setDoc(doc(database, 'chats', chatId), { users: updatedUsers }, { merge: true }).then(() => {
-                const deletedCount = updatedUsers.filter((u) => u.deletedFromChat).length;
-                if (deletedCount === updatedUsers.length) {
-                  return deleteDoc(doc(database, 'chats', chatId));
-                }
-                return Promise.resolve();
-              });
-            });
-            Promise.all(deletePromises).then(() => {
+            try {
+              await Promise.all(selectedItems.map((chatId) => softDeleteChatForUser(chatId)));
               deSelectItems();
-            });
+              await loadChats();
+            } catch (error) {
+              Alert.alert('Error', error.message);
+            }
           },
         },
         { text: 'Cancel', style: 'cancel' },
       ],
       { cancelable: true }
     );
-  }, [selectedItems, chats, deSelectItems]);
+  }, [deSelectItems, loadChats, selectedItems]);
 
   useEffect(() => {
     navigation.setOptions({
@@ -209,21 +216,20 @@ const Chats = ({ setUnreadCount }) => {
     });
   }, [selectedItems, navigation, handleDeleteChat]);
 
-  const getSubtitle = useCallback((chat) => {
-    const { messages } = chat.data();
-    if (!messages || messages.length === 0) return 'No messages yet';
-    const message = messages[0];
-    const isCurrentUser = auth?.currentUser?.email === message.user._id;
-    const userName = isCurrentUser ? 'You' : (message.user.name || '').split(' ')[0];
-    let messageText = '';
-    if (message.image) messageText = 'sent an image';
-    else if (message.text.length > 20) messageText = `${message.text.substring(0, 20)}...`;
-    else messageText = message.text;
-    return `${userName}: ${messageText}`;
-  }, []);
+  const getSubtitle = useCallback(
+    (chat) => {
+      if (!chat.latestMessage) return 'No messages yet';
+
+      const sender = chat.users.find((participant) => participant.id === chat.latestMessage.sender_id);
+      const isCurrentUser = chat.latestMessage.sender_id === user?.id;
+      const userName = isCurrentUser ? 'You' : (sender?.name || sender?.email || '').split(' ')[0];
+      return `${userName}: ${chat.latestMessagePreview}`;
+    },
+    [user?.id]
+  );
 
   const getSubtitle2 = useCallback((chat) => {
-    const { lastUpdated } = chat.data();
+    const { lastUpdated } = chat;
     if (!lastUpdated) return '';
     const options = { year: '2-digit', month: 'numeric', day: 'numeric' };
     return new Date(lastUpdated).toLocaleDateString(undefined, options);
@@ -323,3 +329,4 @@ Chats.propTypes = {
 };
 
 export default Chats;
+

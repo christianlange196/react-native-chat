@@ -1,48 +1,29 @@
+import React, { useContext, useEffect, useState, useCallback } from 'react';
 import { useNavigation } from '@react-navigation/native';
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
-import { doc, query, where, setDoc, orderBy, collection, onSnapshot } from 'firebase/firestore';
+import { View, Text, StyleSheet, ScrollView, SafeAreaView, Alert } from 'react-native';
 
 import Cell from '../components/Cell';
 import { colors } from '../config/constants';
 import ContactRow from '../components/ContactRow';
-import { auth, database } from '../config/firebase';
+import { AuthenticatedUserContext } from '../contexts/AuthenticatedUserContext';
+import { createOrGetDirectChat, listProfiles } from '../services/chatService';
 
 const Users = () => {
   const navigation = useNavigation();
+  const { user, profile: currentProfile } = useContext(AuthenticatedUserContext);
   const [users, setUsers] = useState([]);
-  const [existingChats, setExistingChats] = useState([]);
 
   useEffect(() => {
-    const collectionUserRef = collection(database, 'users');
-    const q = query(collectionUserRef, orderBy('name', 'asc'));
-    const unsubscribeUsers = onSnapshot(q, (snapshot) => {
-      setUsers(snapshot.docs);
-    });
-
-    // Get existing chats to avoid creating duplicate chats
-    const collectionChatsRef = collection(database, 'chats');
-    const q2 = query(
-      collectionChatsRef,
-      where('users', 'array-contains', {
-        email: auth?.currentUser?.email,
-        name: auth?.currentUser?.displayName,
-        deletedFromChat: false,
-      }),
-      where('groupName', '==', '')
-    );
-    const unsubscribeChats = onSnapshot(q2, (snapshot) => {
-      const existing = snapshot.docs.map((existingChat) => ({
-        chatId: existingChat.id,
-        userEmails: existingChat.data().users,
-      }));
-      setExistingChats(existing);
-    });
-
-    return () => {
-      unsubscribeUsers();
-      unsubscribeChats();
+    const loadUsers = async () => {
+      try {
+        const data = await listProfiles();
+        setUsers(data);
+      } catch (error) {
+        Alert.alert('Error', error.message);
+      }
     };
+
+    loadUsers();
   }, []);
 
   const handleNewGroup = useCallback(() => {
@@ -53,78 +34,59 @@ const Users = () => {
     alert('New user');
   }, []);
 
-  const handleName = useCallback((user) => {
-    const { name } = user.data();
-    const { email } = user.data();
-    if (name) {
-      return email === auth?.currentUser?.email ? `${name}*(You)` : name;
-    }
-    return email || '~ No Name or Email ~';
-  }, []);
-
-  const handleNavigate = useCallback(
-    (user) => {
-      let navigationChatID = '';
-      let messageYourselfChatID = '';
-
-      existingChats.forEach((existingChat) => {
-        const isCurrentUserInTheChat = existingChat.userEmails.some(
-          (e) => e.email === auth?.currentUser?.email
-        );
-        const isMessageYourselfExists = existingChat.userEmails.filter(
-          (e) => e.email === user.data().email
-        ).length;
-
-        if (
-          isCurrentUserInTheChat &&
-          existingChat.userEmails.some((e) => e.email === user.data().email)
-        ) {
-          navigationChatID = existingChat.chatId;
-        }
-
-        if (isMessageYourselfExists === 2) {
-          messageYourselfChatID = existingChat.chatId;
-        }
-
-        if (auth?.currentUser?.email === user.data().email) {
-          navigationChatID = '';
-        }
-      });
-
-      if (messageYourselfChatID) {
-        navigation.navigate('Chat', { id: messageYourselfChatID, chatName: handleName(user) });
-      } else if (navigationChatID) {
-        navigation.navigate('Chat', { id: navigationChatID, chatName: handleName(user) });
-      } else {
-        // Creates new chat
-        const newRef = doc(collection(database, 'chats'));
-        setDoc(newRef, {
-          lastUpdated: Date.now(),
-          groupName: '', // It is not a group chat
-          users: [
-            {
-              email: auth?.currentUser?.email,
-              name: auth?.currentUser?.displayName,
-              deletedFromChat: false,
-            },
-            { email: user.data().email, name: user.data().name, deletedFromChat: false },
-          ],
-          lastAccess: [
-            { email: auth?.currentUser?.email, date: Date.now() },
-            { email: user.data().email, date: '' },
-          ],
-          messages: [],
-        }).then(() => {
-          navigation.navigate('Chat', { id: newRef.id, chatName: handleName(user) });
-        });
+  const handleName = useCallback(
+    (profile) => {
+      if (profile.name) {
+        return profile.id === user?.id ? `${profile.name}*(You)` : profile.name;
       }
+      return profile.email || '~ No Name or Email ~';
     },
-    [existingChats, handleName, navigation]
+    [user?.id]
   );
 
+  const handleNavigate = useCallback(
+    async (profile) => {
+      try {
+        const result = await createOrGetDirectChat(profile.id);
+        const chatId =
+          typeof result === 'string' ? result : result?.chat_id ?? result?.id ?? result?.[0]?.chat_id;
+
+        if (!chatId) {
+          throw new Error('Chat could not be created. Ensure create_direct_chat RPC is installed.');
+        }
+
+        navigation.navigate('Chat', { id: chatId, chatName: handleName(profile) });
+      } catch (error) {
+        Alert.alert('Error', error.message);
+      }
+    },
+    [handleName, navigation]
+  );
+
+  const handleMessageYourself = useCallback(async () => {
+    if (!user?.id) return;
+
+    try {
+      const result = await createOrGetDirectChat(user.id);
+      const chatId =
+        typeof result === 'string' ? result : result?.chat_id ?? result?.id ?? result?.[0]?.chat_id;
+
+      if (!chatId) {
+        throw new Error('Note-to-self chat could not be created.');
+      }
+
+      navigation.navigate('Chat', {
+        id: chatId,
+        chatName: currentProfile?.name ?? user?.user_metadata?.name ?? 'You',
+      });
+    } catch (error) {
+      Alert.alert('Error', error.message);
+    }
+  }, [currentProfile?.name, navigation, user?.id, user?.user_metadata?.name]);
+
   const handleSubtitle = useCallback(
-    (user) => (user.data().email === auth?.currentUser?.email ? 'Message yourself' : 'User status'),
-    []
+    (profile) => (profile.id === user?.id ? 'Message yourself' : profile.about || 'User status'),
+    [user?.id]
   );
 
   return (
@@ -135,6 +97,12 @@ const Users = () => {
         tintColor={colors.teal}
         onPress={handleNewGroup}
         style={{ marginTop: 5 }}
+      />
+      <Cell
+        title="Message yourself"
+        icon="document-text"
+        tintColor={colors.teal}
+        onPress={handleMessageYourself}
       />
       <Cell
         title="New user"
@@ -153,12 +121,12 @@ const Users = () => {
           <View>
             <Text style={styles.textContainer}>Registered users</Text>
           </View>
-          {users.map((user) => (
-            <React.Fragment key={user.id}>
+          {users.map((profile) => (
+            <React.Fragment key={profile.id}>
               <ContactRow
-                name={handleName(user)}
-                subtitle={handleSubtitle(user)}
-                onPress={() => handleNavigate(user)}
+                name={handleName(profile)}
+                subtitle={handleSubtitle(profile)}
+                onPress={() => handleNavigate(profile)}
                 showForwardIcon={false}
               />
             </React.Fragment>

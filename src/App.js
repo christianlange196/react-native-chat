@@ -1,9 +1,8 @@
 import { registerRootComponent } from 'expo';
 import { Ionicons } from '@expo/vector-icons';
-import { onAuthStateChanged } from 'firebase/auth';
 import { View, ActivityIndicator } from 'react-native';
 import { MenuProvider } from 'react-native-popup-menu';
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useContext } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -18,7 +17,6 @@ import Group from './screens/Group';
 import SignUp from './screens/SignUp';
 import Profile from './screens/Profile';
 import Account from './screens/Account';
-import { auth } from './config/firebase';
 import Settings from './screens/Settings';
 import ChatInfo from './screens/ChatInfo';
 import { colors } from './config/constants';
@@ -91,17 +89,7 @@ const AuthStack = () => (
 );
 
 const RootNavigator = () => {
-  const { user, setUser } = useContext(AuthenticatedUserContext);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (authenticatedUser) => {
-      setUser(authenticatedUser || null);
-      setIsLoading(false);
-    });
-
-    return unsubscribeAuth;
-  }, [setUser]);
+  const { user, isLoading } = useContext(AuthenticatedUserContext);
 
   if (isLoading) {
     return (
@@ -115,13 +103,13 @@ const RootNavigator = () => {
 };
 
 const App = () => (
-    <MenuProvider>
-      <AuthenticatedUserProvider>
-        <UnreadMessagesProvider>
-          <RootNavigator />
-        </UnreadMessagesProvider>
-      </AuthenticatedUserProvider>
-    </MenuProvider>
-  );
+  <MenuProvider>
+    <AuthenticatedUserProvider>
+      <UnreadMessagesProvider>
+        <RootNavigator />
+      </UnreadMessagesProvider>
+    </AuthenticatedUserProvider>
+  </MenuProvider>
+);
 
-  export default registerRootComponent(App);
+export default registerRootComponent(App);

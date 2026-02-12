@@ -1,20 +1,30 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import { View, Alert } from 'react-native';
-import { signOut, deleteUser } from 'firebase/auth';
-import { doc, deleteDoc } from 'firebase/firestore';
 
 import Cell from '../components/Cell';
 import { colors } from '../config/constants';
-import { auth, database } from '../config/firebase';
+import { AuthenticatedUserContext } from '../contexts/AuthenticatedUserContext';
+import { deleteAccount, signOut } from '../services/authService';
 
 const Account = () => {
-  const onSignOut = () => {
-    signOut(auth).catch((error) => console.log('Error logging out: ', error));
+  const { user } = useContext(AuthenticatedUserContext);
+
+  const onSignOut = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      console.log('Error logging out: ', error);
+    }
   };
 
-  const deleteAccount = () => {
-    deleteUser(auth?.currentUser).catch((error) => console.log('Error deleting: ', error));
-    deleteDoc(doc(database, 'users', auth?.currentUser.email));
+  const onDeleteAccount = async () => {
+    try {
+      await deleteAccount();
+      await signOut();
+    } catch (error) {
+      console.log('Error deleting account: ', error);
+      Alert.alert('Delete account failed', error.message);
+    }
   };
 
   return (
@@ -59,12 +69,12 @@ const Account = () => {
         onPress={() => {
           Alert.alert(
             'Delete account?',
-            'Deleting your account will erase your message history',
+            `Deleting account ${user?.email ?? ''} will erase your message history`,
             [
               {
                 text: 'Delete my account',
                 onPress: () => {
-                  deleteAccount();
+                  onDeleteAccount();
                 },
               },
               {

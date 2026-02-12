@@ -3,10 +3,9 @@ import PropTypes from 'prop-types';
 import { Ionicons } from '@expo/vector-icons';
 import { Text, Alert, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { Menu, MenuOption, MenuOptions, MenuTrigger } from 'react-native-popup-menu';
 
-import { auth, database } from '../config/firebase';
+import { softDeleteChatForUser } from '../services/chatService';
 
 const ChatMenu = ({ chatName, chatId }) => {
   const navigation = useNavigation();
@@ -21,24 +20,7 @@ const ChatMenu = ({ chatName, chatId }) => {
           style: 'destructive',
           onPress: async () => {
             try {
-              const userEmail = auth?.currentUser?.email;
-              if (!userEmail) throw new Error('You are not authenticated.');
-              const chatRef = doc(database, 'chats', chatId);
-              const chatDoc = await getDoc(chatRef);
-              if (!chatDoc.exists()) throw new Error('Chat not found.');
-
-              const users = chatDoc.data().users || [];
-              const updatedUsers = users.map(user =>
-                user.email === userEmail ? { ...user, deletedFromChat: true } : user
-              );
-
-              await setDoc(chatRef, { users: updatedUsers }, { merge: true });
-
-              // If all users marked deleted, remove chat completely
-              const hasAllDeleted = updatedUsers.every(user => user.deletedFromChat);
-              if (hasAllDeleted) await deleteDoc(chatRef);
-
-              // Go back after deletion
+              await softDeleteChatForUser(chatId);
               navigation.goBack();
             } catch (err) {
               Alert.alert('Error', err.message);

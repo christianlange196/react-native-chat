@@ -1,14 +1,16 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import PropTypes from 'prop-types';
 import { Ionicons } from '@expo/vector-icons';
 import { Text, View, Linking, StyleSheet, TouchableOpacity } from 'react-native';
 
 import Cell from '../components/Cell';
-import { auth } from '../config/firebase';
 import { colors } from '../config/constants';
 import ContactRow from '../components/ContactRow';
+import { AuthenticatedUserContext } from '../contexts/AuthenticatedUserContext';
 
 const Settings = ({ navigation }) => {
+  const { user, profile } = useContext(AuthenticatedUserContext);
+
   async function openGithub(url) {
     await Linking.openURL(url);
   }
@@ -16,8 +18,8 @@ const Settings = ({ navigation }) => {
   return (
     <View>
       <ContactRow
-        name={auth?.currentUser?.displayName ?? 'No name'}
-        subtitle={auth?.currentUser?.email}
+        name={profile?.name ?? user?.user_metadata?.name ?? 'No name'}
+        subtitle={profile?.email ?? user?.email}
         style={styles.contactRow}
         onPress={() => {
           navigation.navigate('Profile');

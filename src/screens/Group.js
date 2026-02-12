@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState, useEffect } from 'react';
+import React, { useContext, useState, useEffect } from 'react';
 import { useNavigation } from '@react-navigation/native';
-import { doc, query, setDoc, orderBy, collection, onSnapshot } from 'firebase/firestore';
 import {
   Text,
   View,
@@ -11,27 +10,33 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 
 import { colors } from '../config/constants';
 import ContactRow from '../components/ContactRow';
-import { auth, database } from '../config/firebase';
+import { AuthenticatedUserContext } from '../contexts/AuthenticatedUserContext';
+import { createGroupChat, listProfiles } from '../services/chatService';
 
 const Group = () => {
   const navigation = useNavigation();
+  const { user } = useContext(AuthenticatedUserContext);
   const [selectedItems, setSelectedItems] = useState([]);
   const [users, setUsers] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [groupName, setGroupName] = useState('');
 
   useEffect(() => {
-    const collectionUserRef = collection(database, 'users');
-    const q = query(collectionUserRef, orderBy('name', 'asc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setUsers(snapshot.docs);
-    });
+    const loadUsers = async () => {
+      try {
+        const data = await listProfiles();
+        setUsers(data);
+      } catch (error) {
+        Alert.alert('Error', error.message);
+      }
+    };
 
-    return () => unsubscribe();
+    loadUsers();
   }, []);
 
   useEffect(() => {
@@ -41,32 +46,30 @@ const Group = () => {
     });
   }, [navigation, selectedItems]);
 
-  const handleName = (user) => {
-    if (user.data().name) {
-      return user.data().email === auth?.currentUser?.email
-        ? `${user.data().name}*(You)`
-        : user.data().name;
+  const handleName = (profile) => {
+    if (profile.name) {
+      return profile.id === user?.id ? `${profile.name}*(You)` : profile.name;
     }
-    return user.data().email ? user.data().email : '~ No Name or Email ~';
+    return profile.email || '~ No Name or Email ~';
   };
 
-  const handleSubtitle = (user) =>
-    user.data().email === auth?.currentUser?.email ? 'Message yourself' : 'User status';
+  const handleSubtitle = (profile) =>
+    profile.id === user?.id ? 'Message yourself' : profile.about || 'User status';
 
-  const handleOnPress = (user) => {
-    selectItems(user);
+  const handleOnPress = (profile) => {
+    selectItems(profile);
   };
 
-  const selectItems = (user) => {
+  const selectItems = (profile) => {
     setSelectedItems((prevItems) => {
-      if (prevItems.includes(user.id)) {
-        return prevItems.filter((item) => item !== user.id);
+      if (prevItems.includes(profile.id)) {
+        return prevItems.filter((item) => item !== profile.id);
       }
-      return [...prevItems, user.id];
+      return [...prevItems, profile.id];
     });
   };
 
-  const getSelected = (user) => selectedItems.includes(user.id);
+  const getSelected = (profile) => selectedItems.includes(profile.id);
 
   const deSelectItems = () => {
     setSelectedItems([]);
@@ -76,39 +79,29 @@ const Group = () => {
     setModalVisible(true);
   };
 
-  const handleCreateGroup = () => {
+  const handleCreateGroup = async () => {
     if (!groupName.trim()) {
       alert('Group name cannot be empty');
       return;
     }
 
-    const usersToAdd = users
-      .filter((user) => selectedItems.includes(user.id))
-      .map((user) => ({
-        email: user.data().email,
-        name: user.data().name,
-        deletedFromChat: false,
-      }));
+    try {
+      const memberIds = selectedItems;
+      const result = await createGroupChat(groupName, memberIds);
+      const chatId =
+        typeof result === 'string' ? result : result?.chat_id ?? result?.id ?? result?.[0]?.chat_id;
 
-    usersToAdd.unshift({
-      email: auth?.currentUser?.email,
-      name: auth?.currentUser?.displayName,
-      deletedFromChat: false,
-    });
+      if (!chatId) {
+        throw new Error('Group could not be created. Ensure create_group_chat RPC is installed.');
+      }
 
-    const newRef = doc(collection(database, 'chats'));
-    setDoc(newRef, {
-      lastUpdated: Date.now(),
-      users: usersToAdd,
-      messages: [],
-      groupName,
-      groupAdmins: [auth?.currentUser?.email],
-    }).then(() => {
-      navigation.navigate('Chat', { id: newRef.id, chatName: groupName });
+      navigation.navigate('Chat', { id: chatId, chatName: groupName });
       deSelectItems();
       setModalVisible(false);
       setGroupName('');
-    });
+    } catch (error) {
+      Alert.alert('Error', error.message);
+    }
   };
 
   return (
@@ -120,15 +113,15 @@ const Group = () => {
       ) : (
         <ScrollView>
           {users.map(
-            (user) =>
-              user.data().email !== auth?.currentUser?.email && (
-                <React.Fragment key={user.id}>
+            (profile) =>
+              profile.id !== user?.id && (
+                <React.Fragment key={profile.id}>
                   <ContactRow
-                    style={getSelected(user) ? styles.selectedContactRow : {}}
-                    name={handleName(user)}
-                    subtitle={handleSubtitle(user)}
-                    onPress={() => handleOnPress(user)}
-                    selected={getSelected(user)}
+                    style={getSelected(profile) ? styles.selectedContactRow : {}}
+                    name={handleName(profile)}
+                    subtitle={handleSubtitle(profile)}
+                    onPress={() => handleOnPress(profile)}
+                    selected={getSelected(profile)}
                     showForwardIcon={false}
                   />
                 </React.Fragment>
@@ -158,7 +151,7 @@ const Group = () => {
             onChangeText={setGroupName}
             value={groupName}
             placeholder="Group Name"
-            onSubmitEditing={handleCreateGroup} // Create group on submit
+            onSubmitEditing={handleCreateGroup}
           />
         </View>
       </Modal>

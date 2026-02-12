@@ -1,13 +1,12 @@
 import PropTypes from 'prop-types';
 import { Ionicons } from '@expo/vector-icons';
-import { doc, getDoc } from 'firebase/firestore';
 import React, { useState, useEffect } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { View, Text, Alert, FlatList, StyleSheet, TouchableOpacity } from 'react-native';
 
 import Cell from '../components/Cell';
 import { colors } from '../config/constants';
-import { database } from '../config/firebase';
+import { getChatInfo } from '../services/chatService';
 
 const ChatInfo = ({ route }) => {
   const { chatId, chatName } = route.params;
@@ -15,33 +14,18 @@ const ChatInfo = ({ route }) => {
   const [groupName, setGroupName] = useState('');
 
   useEffect(() => {
-    const fetchChatInfo = async () => {
+    const fetchInfo = async () => {
       try {
-        const chatRef = doc(database, 'chats', chatId);
-        const chatDoc = await getDoc(chatRef);
-
-        if (chatDoc.exists()) {
-          const chatData = chatDoc.data();
-          if (chatData) {
-            if (Array.isArray(chatData.users)) {
-              setUsers(chatData.users);
-            }
-            if (chatData.groupName) {
-              setGroupName(chatData.groupName);
-            }
-          } else {
-            setUsers([]);
-          }
-        } else {
-          Alert.alert('Error', 'Chat does not exist');
-        }
+        const data = await getChatInfo(chatId);
+        setUsers(data.members || []);
+        setGroupName(data.chat?.group_name || '');
       } catch (error) {
         Alert.alert('Error', 'An error occurred while fetching chat info');
         console.error('Error fetching chat info: ', error);
       }
     };
 
-    fetchChatInfo();
+    fetchInfo();
   }, [chatId]);
 
   const renderUser = ({ item }) => (
@@ -54,7 +38,7 @@ const ChatInfo = ({ route }) => {
     </View>
   );
 
-  const uniqueUsers = Array.from(new Map(users.map((user) => [user.email, user])).values());
+  const uniqueUsers = Array.from(new Map(users.map((member) => [member.id, member])).values());
 
   return (
     <SafeAreaView style={styles.container}>
@@ -88,7 +72,7 @@ const ChatInfo = ({ route }) => {
       <FlatList
         data={uniqueUsers}
         renderItem={renderUser}
-        keyExtractor={(item) => item.email}
+        keyExtractor={(item) => item.id}
         contentContainerStyle={styles.usersList}
       />
     </SafeAreaView>

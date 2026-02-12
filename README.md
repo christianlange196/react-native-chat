@@ -5,7 +5,7 @@
    <br>
    <br>
    <img src="https://img.shields.io/badge/react_native-%2320232a.svg?style=for-the-badge&logo=react&logoColor=%2361DAFB" />
-   <img src="https://img.shields.io/badge/firebase-%23039BE5.svg?style=for-the-badge&logo=firebase" />
+   <img src="https://img.shields.io/badge/supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white" />
    <img src="https://img.shields.io/badge/expo-1C1E24?style=for-the-badge&logo=expo&logoColor=#D04A37" />
 </h1>
 
@@ -37,7 +37,7 @@
 
 ## ℹ️ Introduction
 
-**React Native Chat App** is a real-time chat application built using [React Native](https://reactnative.dev/) and [Expo](https://expo.dev/), powered by [Firebase](https://firebase.google.com/) (Web v9) for authentication and real-time messaging.
+**React Native Chat App** is a real-time chat application built using [React Native](https://reactnative.dev/) and [Expo](https://expo.dev/), powered by [Supabase](https://supabase.com/) for authentication, PostgreSQL-backed realtime messaging, and storage.
 
 - For the live demo video see [Demo.mp4](./media/ReactNativeChat-Live-Demo.mp4)     
 
@@ -52,7 +52,7 @@ https://github.com/Ctere1/react-native-chat/assets/62745858/bcde4aa0-d2f2-4d8c-8
 
 | Feature             | Description                                                                                           |
 | :------------------ | :---------------------------------------------------------------------------------------------------- |
-| **Signup and Login**  | Firebase Email/Password sign-in method. Allow users to sign up using their email address and password |
+| **Signup and Login**  | Supabase Email/Password sign-in method. Allow users to sign up using their email address and password |
 | **Send Text Message** | Essential for casual messaging                                                                        |
 | **Send Picture**      | You can send pictures without losing quality                                                          |
 | **Group Chat**        | You can send your messages to multiple people at the same time                                        |
@@ -84,7 +84,7 @@ npx expo start
 > Install [Expo Go](https://expo.dev/go) on your mobile device to test the app instantly.
 
 > [!WARNING]  
-> Don't forget to set up your `.env` file for Firebase connection. See [Firebase docs](https://firebase.google.com/docs/firestore/quickstart) or [this comment](https://github.com/Ctere1/react-native-chat/issues/1#issuecomment-2414810841).
+> Don't forget to set up your `.env` file for Supabase connection using `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
 
 ---
 
@@ -93,7 +93,7 @@ npx expo start
 To build this application for production (e.g., APK for Android):
 
 1. **Set up environment variables:**  
-   Create a `.env` file with your Firebase config. Push it to EAS environment:
+   Create a `.env` file with your Supabase config. Push it to EAS environment:
 
    ```bash
    eas secret:push --scope project --env-file .env
@@ -159,7 +159,7 @@ This software uses the following packages:
 - [Expo](https://expo.dev/)
 - [React](https://react.dev/)
 - [React Native](https://reactnative.dev/)
-- [Firebase](https://firebase.google.com/)
+- [Supabase](https://supabase.com/)
 - [react-native-gifted-chat](https://github.com/FaridSafi/react-native-gifted-chat)
 - [react-native-emoji-modal](https://github.com/staltz/react-native-emoji-modal)
 
@@ -185,3 +185,4 @@ This software uses the following packages:
 <a href="https://github.com/Ctere1/react-native-chat/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=Ctere1/react-native-chat" alt="Contributors">
 </a>
+

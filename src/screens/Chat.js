@@ -1,12 +1,9 @@
 import PropTypes from 'prop-types';
-import uuid from 'react-native-uuid';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import EmojiModal from 'react-native-emoji-modal';
-import React, { useState, useEffect, useCallback } from 'react';
-import { doc, setDoc, getDoc, onSnapshot } from 'firebase/firestore';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { Send, Bubble, GiftedChat, InputToolbar } from 'react-native-gifted-chat';
-import { ref, getStorage, getDownloadURL, uploadBytesResumable } from 'firebase/storage';
 import {
   View,
   Keyboard,
@@ -14,10 +11,13 @@ import {
   BackHandler,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 
 import { colors } from '../config/constants';
-import { auth, database } from '../config/firebase';
+import { AuthenticatedUserContext } from '../contexts/AuthenticatedUserContext';
+import { listMessages, sendMessage, subscribeToMessages } from '../services/messageService';
+import { uploadChatImage } from '../services/storageService';
 
 const RenderLoadingUpload = () => (
   <View style={styles.loadingContainerUpload}>
@@ -80,25 +80,30 @@ const RenderActions = (handleEmojiPanel) => (
 );
 
 function Chat({ route }) {
+  const { user, profile } = useContext(AuthenticatedUserContext);
   const [messages, setMessages] = useState([]);
   const [modal, setModal] = useState(false);
   const [uploading, setUploading] = useState(false);
 
+  const loadMessages = useCallback(async () => {
+    try {
+      const rows = await listMessages(route.params.id);
+      setMessages(rows);
+    } catch (error) {
+      Alert.alert('Error', error.message);
+    }
+  }, [route.params.id]);
+
   useEffect(() => {
-    const unsubscribe = onSnapshot(doc(database, 'chats', route.params.id), (document) => {
-      setMessages(
-        document.data().messages.map((message) => ({
-          ...message,
-          createdAt: message.createdAt.toDate(),
-          image: message.image ?? '',
-        }))
-      );
+    let unsubscribe = () => {};
+
+    loadMessages();
+    unsubscribe = subscribeToMessages(route.params.id, () => {
+      loadMessages();
     });
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      //  Dismiss the keyboard
       Keyboard.dismiss();
-      //  If the emoji panel is open, close it
       if (modal) {
         setModal(false);
         return true;
@@ -106,46 +111,32 @@ function Chat({ route }) {
       return false;
     });
 
-    //  Dismiss the emoji panel when the keyboard is shown
     const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', () => {
       if (modal) setModal(false);
     });
 
-    // Cleanup
     return () => {
       unsubscribe();
       backHandler.remove();
       keyboardDidShowListener.remove();
     };
-  }, [route.params.id, modal]);
+  }, [loadMessages, modal, route.params.id]);
 
   const onSend = useCallback(
     async (m = []) => {
-      // Get messages
-      const chatDocRef = doc(database, 'chats', route.params.id);
-      const chatDocSnap = await getDoc(chatDocRef);
+      if (!m.length || !user?.id) return;
 
-      const chatData = chatDocSnap.data();
-      const data = chatData.messages.map((message) => ({
-        ...message,
-        createdAt: message.createdAt.toDate(),
-        image: message.image ?? '',
-      }));
-
-      // Attach new message
-      const messagesWillSend = [{ ...m[0], sent: true, received: false }];
-      const chatMessages = GiftedChat.append(data, messagesWillSend);
-
-      setDoc(
-        doc(database, 'chats', route.params.id),
-        {
-          messages: chatMessages,
-          lastUpdated: Date.now(),
-        },
-        { merge: true }
-      );
+      try {
+        await sendMessage({
+          chatId: route.params.id,
+          senderId: user.id,
+          text: m[0].text,
+        });
+      } catch (error) {
+        Alert.alert('Error', error.message);
+      }
     },
-    [route.params.id]
+    [route.params.id, user?.id]
   );
 
   const pickImage = async () => {
@@ -161,58 +152,30 @@ function Chat({ route }) {
   };
 
   const uploadImageAsync = async (uri) => {
+    if (!user?.id) return;
+
     setUploading(true);
-    const blob = await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.onload = () => resolve(xhr.response);
-      xhr.onerror = () => reject(new TypeError('Network request failed'));
-      xhr.responseType = 'blob';
-      xhr.open('GET', uri, true);
-      xhr.send(null);
-    });
-
-    const randomString = uuid.v4();
-    const fileRef = ref(getStorage(), randomString);
-    const uploadTask = uploadBytesResumable(fileRef, blob);
-
-    uploadTask.on(
-      'state_changed',
-      (snapshot) => {
-        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        console.log(`Upload is ${progress}% done`);
-      },
-      (error) => {
-        // Handle unsuccessful uploads
-        console.log(error);
-      },
-      async () => {
-        const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-        setUploading(false);
-        onSend([
-          {
-            _id: randomString,
-            createdAt: new Date(),
-            text: '',
-            image: downloadUrl,
-            user: {
-              _id: auth?.currentUser?.email,
-              name: auth?.currentUser?.displayName,
-              avatar: 'https://i.pravatar.cc/300',
-            },
-          },
-        ]);
-      }
-    );
+    try {
+      const imagePath = await uploadChatImage({ chatId: route.params.id, userId: user.id, uri });
+      await sendMessage({
+        chatId: route.params.id,
+        senderId: user.id,
+        text: '',
+        imagePath,
+      });
+    } catch (error) {
+      Alert.alert('Upload failed', error.message);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleEmojiPanel = useCallback(() => {
     setModal((prevModal) => {
       if (prevModal) {
-        // If the modal is already open, close it
         Keyboard.dismiss();
         return false;
       }
-      // If the modal is closed, open it
       Keyboard.dismiss();
       return true;
     });
@@ -230,9 +193,9 @@ function Chat({ route }) {
         messagesContainerStyle={{ backgroundColor: '#fff' }}
         textInputStyle={{ backgroundColor: '#fff', borderRadius: 20 }}
         user={{
-          _id: auth?.currentUser?.email,
-          name: auth?.currentUser?.displayName,
-          avatar: 'https://i.pravatar.cc/300',
+          _id: user?.id,
+          name: profile?.name ?? user?.user_metadata?.name,
+          avatar: profile?.avatar_url ?? 'https://i.pravatar.cc/300',
         }}
         renderBubble={(props) => RenderBubble(props)}
         renderSend={(props) => RenderAttach({ ...props, onPress: pickImage })}
@@ -255,19 +218,16 @@ function Chat({ route }) {
           columns={5}
           emojiSize={66}
           activeShortcutColor={colors.primary}
-          onEmojiSelected={(emoji) => {
-            onSend([
-              {
-                _id: uuid.v4(),
-                createdAt: new Date(),
+          onEmojiSelected={async (emoji) => {
+            try {
+              await sendMessage({
+                chatId: route.params.id,
+                senderId: user?.id,
                 text: emoji,
-                user: {
-                  _id: auth?.currentUser?.email,
-                  name: auth?.currentUser?.displayName,
-                  avatar: 'https://i.pravatar.cc/300',
-                },
-              },
-            ]);
+              });
+            } catch (error) {
+              Alert.alert('Error', error.message);
+            }
           }}
         />
       )}
@@ -351,3 +311,5 @@ Chat.propTypes = {
 };
 
 export default Chat;
+
+

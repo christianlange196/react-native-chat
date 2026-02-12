@@ -1,7 +1,5 @@
 import PropTypes from 'prop-types';
 import React, { useState } from 'react';
-import { doc, setDoc } from 'firebase/firestore';
-import { updateProfile, createUserWithEmailAndPassword } from 'firebase/auth';
 import {
   Text,
   View,
@@ -16,28 +14,31 @@ import {
 
 import { colors } from '../config/constants';
 import backImage from '../assets/background.png';
-import { auth, database } from '../config/firebase';
+import { signUpWithPassword } from '../services/authService';
 
 export default function SignUp({ navigation }) {
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
-  const onHandleSignup = () => {
-    if (email !== '' && password !== '') {
-      createUserWithEmailAndPassword(auth, email, password)
-        .then((cred) => {
-          updateProfile(cred.user, { displayName: username }).then(() => {
-            setDoc(doc(database, 'users', cred.user.email), {
-              id: cred.user.uid,
-              email: cred.user.email,
-              name: cred.user.displayName,
-              about: 'Available',
-            });
-          });
-          console.log(`Signup success: ${cred.user.email}`);
-        })
-        .catch((err) => Alert.alert('Signup error', err.message));
+  const onHandleSignup = async () => {
+    const trimmedEmail = email.trim();
+    const trimmedName = username.trim();
+
+    if (!trimmedEmail || !trimmedName || !password) {
+      Alert.alert('Signup error', 'Please fill out name, email, and password.');
+      return;
+    }
+
+    if (password.length < 6) {
+      Alert.alert('Signup error', 'Password must be at least 6 characters.');
+      return;
+    }
+
+    try {
+      await signUpWithPassword({ email: trimmedEmail, password, name: trimmedName });
+    } catch (err) {
+      Alert.alert('Signup error', err.message);
     }
   };
 
@@ -63,7 +64,6 @@ export default function SignUp({ navigation }) {
           autoCapitalize="none"
           keyboardType="email-address"
           textContentType="emailAddress"
-          autoFocus
           value={email}
           onChangeText={(text) => setEmail(text)}
         />
